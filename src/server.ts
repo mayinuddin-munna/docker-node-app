@@ -1,18 +1,15 @@
 import { Server } from "http";
 import app from "./app";
-import { errorlogger, logger } from "./app/src/shared/logger";
 
 let server: Server;
 
 async function main() {
   try {
-    server = app.listen(process.env.PORT, () => {
-      console.log(`app is listening on port ${process.env.PORT}`);
-      logger.info(`app is listening on port ${process.env.PORT}`);
+    server = app.listen(5000, () => {
+      console.log(`app is listening on port 5000`);
     });
   } catch (err) {
     console.log(err);
-    errorlogger.error(err);
   }
 }
 
@@ -20,7 +17,6 @@ main();
 
 process.on("unhandledRejection", (err) => {
   console.log(`😈 unahandledRejection is detected , shutting down ...`, err);
-  errorlogger.error(err);
   if (server) {
     server.close(() => {
       process.exit(1);
@@ -31,6 +27,5 @@ process.on("unhandledRejection", (err) => {
 
 process.on("uncaughtException", () => {
   console.log(`😈 uncaughtException is detected , shutting down ...`);
-  errorlogger.error("uncaughtException is detected");
   process.exit(1);
 });

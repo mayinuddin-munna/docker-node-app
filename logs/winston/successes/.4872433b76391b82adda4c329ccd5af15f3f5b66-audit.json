@@ -1,0 +1,50 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/.4872433b76391b82adda4c329ccd5af15f3f5b66-audit.json",
+    "files": [
+        {
+            "date": 1750220700901,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-25-00-success.log",
+            "hash": "bcd86cd0e8046c11f4850a6231dc468d2788a2b93f7c4846ec590cca1698af50"
+        },
+        {
+            "date": 1750220736669,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-25-36-success.log",
+            "hash": "f629a16fec9ccdff371bd6b0e75aa2f6f29efedb801e445506d17d8d40eb68d4"
+        },
+        {
+            "date": 1750220804075,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-26-44-success.log",
+            "hash": "ae4b7653f4e4ad315a1bdf6864817e2d880a9529dc163357ae3fbbc3d90d3f48"
+        },
+        {
+            "date": 1750220818895,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-26-58-success.log",
+            "hash": "c762a8e0b6faabae5a03ed081e88ac2cc8da9431d03aa1dbcca3df9b321a82cd"
+        },
+        {
+            "date": 1750220868322,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-27-48-success.log",
+            "hash": "f27c7c3fbaa777efbbe531472a2d096798d1b05779eaf93bcabb95dc17e49328"
+        },
+        {
+            "date": 1750221050191,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-30-50-success.log",
+            "hash": "4d07d357155cc78005492aa991d947f6fd68fd3fc5e436639207127e91d7dcf8"
+        },
+        {
+            "date": 1750221121083,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-32-01-success.log",
+            "hash": "4e8cb58bb7adf95f819d668b371c519376060139a62954dae971c7910daa6b12"
+        },
+        {
+            "date": 1750221203276,
+            "name": "/home/munna/Web Dev/Docker/docker-node-app/logs/winston/successes/docker-2025-06-18-10-33-23-success.log",
+            "hash": "cc657d7ffcab8cd8a6b4edc6e97f2b40f45dc638962bb6712a44cefd6888c8c6"
+        }
+    ],
+    "hashType": "sha256"
+}

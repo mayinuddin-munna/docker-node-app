@@ -4,7 +4,7 @@
     "workspaceFolder": "/app",
     "mounts": [
         // Bind mount for your local project
-        "source=/home/munna/Web Dev/Docker/docker-node-app,target=/app,type=bind",
+        "source=/home/munna/Web Dev/Docker/docker-with-typescript-backend-module-4,target=/app,type=bind",
         // Named volume for logs (similar to: -v ts-docker-logs://app/logs)
         "source=ts-docker-logs,target=/app/logs,type=volume",
         // Anonymous volume for node_modules (similar to: -v //app/node_modules)

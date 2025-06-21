@@ -2,6 +2,8 @@ import { TUser } from './user.interface';
 import { User } from './user.model';
 
 const createUser = async (payload: TUser) => {
+  console.log(payload);
+  
   const user = await User.create(payload);
 
   return user;

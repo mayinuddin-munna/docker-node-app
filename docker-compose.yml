@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo
+    container_name: mongodb
+    ports:
+      - "27017:27017"  # maps host:container port
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build: .
+    container_name: backend
+    ports:
+      - "3000:3000" # expose app port if needed
+    environment:
+      - DB_URL=mongodb://mongodb:27017/docker_test
+    depends_on:
+      - mongodb
+    command: npm run dev  # or your custom start command
+
+volumes:
+  mongo_data:

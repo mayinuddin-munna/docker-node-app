@@ -1,51 +1,216 @@
-name: Test EC2 Connection
+name: Docker CI/CD for Node.js App
 
 on:
     push:
-        branches: [main]
+        branches:
+            - main
+
+env:
+    DOCKER_IMAGE_NAME: docker-ts-backend
+    CONTAINER_NAME: docker-ts-backend-container
+    DOCKER_VOLUME: docker-ts-backend-volume
 
 jobs:
-    test-and-deploy:
+    verify-connection:
         runs-on: ubuntu-latest
+        outputs:
+            connection_success: ${{ steps.verify-ssh.outputs.success }}
+
         steps:
-            - name: Checkout
-              uses: actions/checkout@v4
-
-            - name: Trim EC2_HOST secret
-              id: trim-host
+            - name: Debug - Show EC2_HOST (masked)
               run: |
-                  # Trim the host secret
-                  HOST='${{ secrets.EC2_HOST }}'
-                  TRIMMED_HOST=$(echo "$HOST" | xargs)
-                  if [ -z "$TRIMMED_HOST" ]; then
-                    echo "ERROR: EC2_HOST secret is empty or not set."
-                    exit 1
-                  fi
-                  # Mask the output to avoid leaking the secret
-                  echo "::add-mask::$TRIMMED_HOST"
-                  echo "EC2_HOST secret is set and trimmed."
-                  echo "::set-output name=host::$TRIMMED_HOST"
+                  echo "EC2_HOST secret is set: ${{ secrets.EC2_HOST != '' }}"
+                  # For debugging only - remove after testing
+                  echo "EC2_HOST first 5 chars: ${EC2_HOST:0:5}..."
+              env:
+                  EC2_HOST: ${{ secrets.EC2_HOST }}
 
-            - name: Test connectivity to EC2 host
+            - name: Test DNS Resolution
               run: |
-                  HOST="${{ steps.trim-host.outputs.host }}"
-                  echo "Testing connectivity to $HOST"
-                  # Use nc to test port 22 with a 5 second timeout
-                  if nc -z -w 5 "$HOST" 22; then
-                    echo "✅ Port 22 is open on $HOST"
+                  # Test if host resolves
+                  if nslookup ${{ secrets.EC2_HOST }} > /dev/null 2>&1; then
+                    echo "✅ DNS resolution successful"
                   else
-                    echo "❌ Port 22 is not reachable on $HOST"
-                    exit 1
+                    echo "❌ DNS resolution failed - using IP address instead of hostname?"
                   fi
 
-            - name: Attempt SSH connection
+            - name: Verify SSH Connection
+              id: verify-ssh
               uses: appleboy/ssh-action@v1
               with:
-                  host: ${{ steps.trim-host.outputs.host }}
+                  host: ${{ secrets.EC2_HOST }}
                   username: ubuntu
                   key: ${{ secrets.EC2_SSH_KEY }}
                   timeout: 30
                   command_timeout: 30
                   script: |
-                      echo "✅ Connected to $(hostname)"
-                      echo "Running from directory: $(pwd)"
+                      echo "✅ SSH Connection Successful!"
+                      echo "EC2 Instance Details:"
+                      echo "Hostname: $(hostname)"
+                      echo "IP Address: $(hostname -I)"
+                      echo "Uptime: $(uptime -p)"
+                      echo "Disk Space:"
+                      df -h /
+
+                      # Mark success for next job
+                      echo "success=true" >> $GITHUB_OUTPUT
+
+            - name: Check EC2 Instance
+              if: failure()
+              run: |
+                  echo "❌ SSH Connection Failed"
+                  echo ""
+                  echo "Troubleshooting steps:"
+                  echo "1. Check EC2_HOST secret is the Public IP (not hostname)"
+                  echo "2. Verify EC2 instance is running in AWS Console"
+                  echo "3. Check Security Group allows SSH (port 22) from 0.0.0.0/0"
+                  echo "4. Ensure EC2_SSH_KEY contains the full private key"
+
+    build:
+        runs-on: ubuntu-latest
+        needs: verify-connection
+        if: needs.verify-connection.outputs.connection_success == 'true'
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Build Docker Image
+              run: |
+                  docker build \
+                    --tag $DOCKER_IMAGE_NAME:latest \
+                    --tag $DOCKER_IMAGE_NAME:${{ github.sha }} \
+                    --file Dockerfile \
+                    .
+
+            - name: Save Docker Image
+              run: |
+                  docker save $DOCKER_IMAGE_NAME:latest -o $DOCKER_IMAGE_NAME.tar
+                  echo "Image size: $(ls -lh $DOCKER_IMAGE_NAME.tar | awk '{print $5}')"
+
+            - name: Upload Docker Image
+              uses: actions/upload-artifact@v4
+              with:
+                  name: docker-image
+                  path: ${{ env.DOCKER_IMAGE_NAME }}.tar
+                  retention-days: 1
+
+    deploy:
+        runs-on: ubuntu-latest
+        needs: [verify-connection, build]
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Download Docker Image
+              uses: actions/download-artifact@v4
+              with:
+                  name: docker-image
+                  path: ./
+
+            - name: Load Docker Image
+              run: |
+                  docker load -i $DOCKER_IMAGE_NAME.tar
+                  echo "Loaded images:"
+                  docker images | grep $DOCKER_IMAGE_NAME
+
+            - name: Copy and Deploy to EC2
+              uses: appleboy/ssh-action@v1
+              with:
+                  host: ${{ secrets.EC2_HOST }}
+                  username: ubuntu
+                  key: ${{ secrets.EC2_SSH_KEY }}
+                  timeout: 60
+                  command_timeout: 120
+                  script: |
+                      echo "🚀 Starting deployment..."
+
+                      # 1. Transfer Docker image to EC2
+                      echo "📦 Transferring Docker image..."
+                      if ! docker load < /dev/stdin; then
+                        echo "Failed to load Docker image"
+                        exit 1
+                      fi
+
+                      # 2. Create necessary directories
+                      sudo mkdir -p /var/log/${{ env.CONTAINER_NAME }}
+                      sudo chmod 755 /var/log/${{ env.CONTAINER_NAME }}
+
+                      # 3. Stop and remove old container
+                      echo "🛑 Stopping existing container..."
+                      docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+                      docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+
+                      # 4. Create volume if not exists
+                      docker volume create ${{ env.DOCKER_VOLUME }} 2>/dev/null || true
+
+                      # 5. Deploy new container
+                      echo "🚀 Starting new container..."
+                      docker run -d \
+                        --name ${{ env.CONTAINER_NAME }} \
+                        --restart unless-stopped \
+                        -p 5000:5000 \
+                        -v ${{ env.DOCKER_VOLUME }}:/app/logs \
+                        -v /var/log/${{ env.CONTAINER_NAME }}:/app/logs/host \
+                        -e NODE_ENV=production \
+                        ${{ env.DOCKER_IMAGE_NAME }}:latest
+
+                      # 6. Wait for container to start
+                      echo "⏳ Waiting for container to start..."
+                      sleep 15
+
+                      # 7. Verify deployment
+                      echo "🔍 Verifying deployment..."
+                      CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "not_found")
+
+                      if [ "$CONTAINER_STATUS" = "running" ]; then
+                        echo "✅ Container is running"
+                        echo "📊 Container details:"
+                        docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                        
+                        echo -e "\n📝 Last 10 lines of logs:"
+                        docker logs --tail 10 ${{ env.CONTAINER_NAME }}
+                        
+                        echo -e "\n🟢 Deployment successful at $(date)"
+                      else
+                        echo "❌ Container status: $CONTAINER_STATUS"
+                        echo "Recent logs:"
+                        docker logs ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "No logs available"
+                        exit 1
+                      fi
+              env:
+                  DOCKER_IMAGE_NAME: ${{ env.DOCKER_IMAGE_NAME }}
+                  CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
+                  DOCKER_VOLUME: ${{ env.DOCKER_VOLUME }}
+
+    post-deploy:
+        runs-on: ubuntu-latest
+        needs: deploy
+        if: always()
+
+        steps:
+            - name: Deployment Summary
+              run: |
+                  if [ "${{ needs.deploy.result }}" = "success" ]; then
+                    echo "🎉 Deployment Successful!"
+                    echo "Your application is now running at:"
+                    echo "http://${{ secrets.EC2_HOST }}:5000"
+                    echo ""
+                    echo "Next steps:"
+                    echo "1. Test the endpoint: curl http://${{ secrets.EC2_HOST }}:5000"
+                    echo "2. Check logs on EC2: docker logs ${{ env.CONTAINER_NAME }}"
+                    echo "3. Monitor container: docker stats ${{ env.CONTAINER_NAME }}"
+                  else
+                    echo "❌ Deployment Failed"
+                    echo ""
+                    echo "Common issues:"
+                    echo "1. Port 5000 not open in Security Group"
+                    echo "2. Application error - check docker logs"
+                    echo "3. Insufficient disk space on EC2"
+                    echo ""
+                    echo "Check the 'deploy' job logs for details."
+                  fi

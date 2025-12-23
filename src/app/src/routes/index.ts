@@ -10,9 +10,9 @@ const router = Router();
 
 const moduleRoutes: TModuleRoutes[] = [
   {
-    path : '/users',
-    route : UserRoutes
-  }
+    path: "/users",
+    route: UserRoutes,
+  },
 ];
 
 moduleRoutes.forEach((route) => router.use(route.path, route.route));

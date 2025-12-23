@@ -3,7 +3,7 @@ import { logsController } from "./logs.controller";
 
 const router = express.Router();
 
-// All Errors
+// All Errors 
 router.get("/errors", logsController.getAllErrorLogs);
 
 // All Successes

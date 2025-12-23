@@ -13,63 +13,28 @@ env:
 jobs:
     verify-connection:
         runs-on: ubuntu-latest
-        outputs:
-            connection_success: ${{ steps.verify-ssh.outputs.success }}
 
         steps:
-            - name: Debug - Show EC2_HOST (masked)
-              run: |
-                  echo "EC2_HOST secret is set: ${{ secrets.EC2_HOST != '' }}"
-                  # For debugging only - remove after testing
-                  echo "EC2_HOST first 5 chars: ${EC2_HOST:0:5}..."
-              env:
-                  EC2_HOST: ${{ secrets.EC2_HOST }}
-
-            - name: Test DNS Resolution
-              run: |
-                  # Test if host resolves
-                  if nslookup ${{ secrets.EC2_HOST }} > /dev/null 2>&1; then
-                    echo "✅ DNS resolution successful"
-                  else
-                    echo "❌ DNS resolution failed - using IP address instead of hostname?"
-                  fi
+            - name: Checkout Repository
+              uses: actions/checkout@v4
 
             - name: Verify SSH Connection
-              id: verify-ssh
               uses: appleboy/ssh-action@v1
               with:
                   host: ${{ secrets.EC2_HOST }}
-                  username: ubuntu
+                  username: ${{ secrets.EC2_USER || 'ubuntu' }}
                   key: ${{ secrets.EC2_SSH_KEY }}
-                  timeout: 30
-                  command_timeout: 30
+                  timeout: 30s
+                  command_timeout: 30s
                   script: |
                       echo "✅ SSH Connection Successful!"
-                      echo "EC2 Instance Details:"
-                      echo "Hostname: $(hostname)"
+                      echo "Connected to: $(hostname)"
                       echo "IP Address: $(hostname -I)"
-                      echo "Uptime: $(uptime -p)"
-                      echo "Disk Space:"
-                      df -h /
-
-                      # Mark success for next job
-                      echo "success=true" >> $GITHUB_OUTPUT
-
-            - name: Check EC2 Instance
-              if: failure()
-              run: |
-                  echo "❌ SSH Connection Failed"
-                  echo ""
-                  echo "Troubleshooting steps:"
-                  echo "1. Check EC2_HOST secret is the Public IP (not hostname)"
-                  echo "2. Verify EC2 instance is running in AWS Console"
-                  echo "3. Check Security Group allows SSH (port 22) from 0.0.0.0/0"
-                  echo "4. Ensure EC2_SSH_KEY contains the full private key"
+                      echo "Current directory: $(pwd)"
 
     build:
         runs-on: ubuntu-latest
         needs: verify-connection
-        if: needs.verify-connection.outputs.connection_success == 'true'
 
         steps:
             - name: Checkout Repository
@@ -81,15 +46,13 @@ jobs:
             - name: Build Docker Image
               run: |
                   docker build \
-                    --tag $DOCKER_IMAGE_NAME:latest \
-                    --tag $DOCKER_IMAGE_NAME:${{ github.sha }} \
+                    --tag ${{ env.DOCKER_IMAGE_NAME }}:latest \
                     --file Dockerfile \
                     .
 
             - name: Save Docker Image
               run: |
-                  docker save $DOCKER_IMAGE_NAME:latest -o $DOCKER_IMAGE_NAME.tar
-                  echo "Image size: $(ls -lh $DOCKER_IMAGE_NAME.tar | awk '{print $5}')"
+                  docker save ${{ env.DOCKER_IMAGE_NAME }}:latest -o ${{ env.DOCKER_IMAGE_NAME }}.tar
 
             - name: Upload Docker Image
               uses: actions/upload-artifact@v4
@@ -100,85 +63,57 @@ jobs:
 
     deploy:
         runs-on: ubuntu-latest
-        needs: [verify-connection, build]
+        needs: build
 
         steps:
-            - name: Checkout
-              uses: actions/checkout@v4
-
             - name: Download Docker Image
               uses: actions/download-artifact@v4
               with:
                   name: docker-image
                   path: ./
 
-            - name: Load Docker Image
-              run: |
-                  docker load -i $DOCKER_IMAGE_NAME.tar
-                  echo "Loaded images:"
-                  docker images | grep $DOCKER_IMAGE_NAME
-
-            - name: Copy and Deploy to EC2
+            - name: Deploy to EC2
               uses: appleboy/ssh-action@v1
               with:
                   host: ${{ secrets.EC2_HOST }}
-                  username: ubuntu
+                  username: ${{ secrets.EC2_USER || 'ubuntu' }}
                   key: ${{ secrets.EC2_SSH_KEY }}
-                  timeout: 60
-                  command_timeout: 120
+                  timeout: 60s
+                  command_timeout: 120s
                   script: |
-                      echo "🚀 Starting deployment..."
+                      # Load the Docker image
+                      echo "📦 Loading Docker image..."
+                      docker load < ${{ env.DOCKER_IMAGE_NAME }}.tar
 
-                      # 1. Transfer Docker image to EC2
-                      echo "📦 Transferring Docker image..."
-                      if ! docker load < /dev/stdin; then
-                        echo "Failed to load Docker image"
-                        exit 1
-                      fi
-
-                      # 2. Create necessary directories
-                      sudo mkdir -p /var/log/${{ env.CONTAINER_NAME }}
-                      sudo chmod 755 /var/log/${{ env.CONTAINER_NAME }}
-
-                      # 3. Stop and remove old container
+                      # Stop and remove existing container
                       echo "🛑 Stopping existing container..."
                       docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
                       docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
 
-                      # 4. Create volume if not exists
+                      # Create volume if it doesn't exist
                       docker volume create ${{ env.DOCKER_VOLUME }} 2>/dev/null || true
 
-                      # 5. Deploy new container
+                      # Run new container
                       echo "🚀 Starting new container..."
                       docker run -d \
-                        --name ${{ env.CONTAINER_NAME }} \
-                        --restart unless-stopped \
                         -p 5000:5000 \
+                        --name ${{ env.CONTAINER_NAME }} \
                         -v ${{ env.DOCKER_VOLUME }}:/app/logs \
-                        -v /var/log/${{ env.CONTAINER_NAME }}:/app/logs/host \
-                        -e NODE_ENV=production \
+                        --restart always \
                         ${{ env.DOCKER_IMAGE_NAME }}:latest
 
-                      # 6. Wait for container to start
-                      echo "⏳ Waiting for container to start..."
-                      sleep 15
+                      # Wait for container to start
+                      sleep 5
 
-                      # 7. Verify deployment
+                      # Verify deployment
                       echo "🔍 Verifying deployment..."
-                      CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "not_found")
-
-                      if [ "$CONTAINER_STATUS" = "running" ]; then
-                        echo "✅ Container is running"
-                        echo "📊 Container details:"
-                        docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-                        
-                        echo -e "\n📝 Last 10 lines of logs:"
-                        docker logs --tail 10 ${{ env.CONTAINER_NAME }}
-                        
-                        echo -e "\n🟢 Deployment successful at $(date)"
+                      if docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}" | grep -q "${{ env.CONTAINER_NAME }}"; then
+                        echo "✅ Deployment successful!"
+                        echo "Container status:"
+                        docker ps --filter "name=${{ env.CONTAINER_NAME }}"
                       else
-                        echo "❌ Container status: $CONTAINER_STATUS"
-                        echo "Recent logs:"
+                        echo "❌ Deployment failed!"
+                        echo "Container logs:"
                         docker logs ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "No logs available"
                         exit 1
                       fi
@@ -186,31 +121,3 @@ jobs:
                   DOCKER_IMAGE_NAME: ${{ env.DOCKER_IMAGE_NAME }}
                   CONTAINER_NAME: ${{ env.CONTAINER_NAME }}
                   DOCKER_VOLUME: ${{ env.DOCKER_VOLUME }}
-
-    post-deploy:
-        runs-on: ubuntu-latest
-        needs: deploy
-        if: always()
-
-        steps:
-            - name: Deployment Summary
-              run: |
-                  if [ "${{ needs.deploy.result }}" = "success" ]; then
-                    echo "🎉 Deployment Successful!"
-                    echo "Your application is now running at:"
-                    echo "http://${{ secrets.EC2_HOST }}:5000"
-                    echo ""
-                    echo "Next steps:"
-                    echo "1. Test the endpoint: curl http://${{ secrets.EC2_HOST }}:5000"
-                    echo "2. Check logs on EC2: docker logs ${{ env.CONTAINER_NAME }}"
-                    echo "3. Monitor container: docker stats ${{ env.CONTAINER_NAME }}"
-                  else
-                    echo "❌ Deployment Failed"
-                    echo ""
-                    echo "Common issues:"
-                    echo "1. Port 5000 not open in Security Group"
-                    echo "2. Application error - check docker logs"
-                    echo "3. Insufficient disk space on EC2"
-                    echo ""
-                    echo "Check the 'deploy' job logs for details."
-                  fi

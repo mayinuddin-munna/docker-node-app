@@ -13,120 +13,87 @@ env:
 jobs:
     verify-connection:
         runs-on: ubuntu-latest
-
         steps:
-            - name: Checkout Repository
-              uses: actions/checkout@v4
+            - uses: actions/checkout@v4
 
             - name: Verify SSH Connection
               uses: appleboy/ssh-action@v1
               with:
                   host: ${{ secrets.EC2_HOST }}
-                  username: ${{ secrets.EC2_USER || 'ubuntu' }}
+                  username: ${{ secrets.EC2_USER }}
                   key: ${{ secrets.EC2_SSH_KEY }}
                   timeout: 30s
-                  command_timeout: 30s
                   script: |
-                      echo "✅ SSH Connection Successful!"
-                      echo "Connected to: $(hostname)"
-                      echo "IP Address: $(hostname -I)"
-                      echo "Current directory: $(pwd)"
+                      echo "SSH OK"
+                      hostname
+                      whoami
 
     build:
         runs-on: ubuntu-latest
         needs: verify-connection
 
         steps:
-            - name: Checkout Repository
-              uses: actions/checkout@v4
-
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v3
+            - uses: actions/checkout@v4
 
             - name: Build Docker Image
-              run: |
-                  docker build \
-                    --tag ${{ env.DOCKER_IMAGE_NAME }}:latest \
-                    --file Dockerfile \
-                    .
+              run: docker build -t $DOCKER_IMAGE_NAME:latest .
 
-            - name: Save Docker Image
-              run: |
-                  docker save ${{ env.DOCKER_IMAGE_NAME }}:latest -o ${{ env.DOCKER_IMAGE_NAME }}.tar
+            - name: Save Image
+              run: docker save $DOCKER_IMAGE_NAME:latest -o docker-image.tar
 
-            - name: Upload Docker Image
+            - name: Upload Image
               uses: actions/upload-artifact@v4
               with:
                   name: docker-image
-                  path: ${{ env.DOCKER_IMAGE_NAME }}.tar
-                  retention-days: 1
+                  path: docker-image.tar
 
     deploy:
         runs-on: ubuntu-latest
         needs: build
 
         steps:
-            - name: Download Docker Image
+            - name: Download Image
               uses: actions/download-artifact@v4
               with:
                   name: docker-image
-                  path: ./
 
-            - name: Deploy to EC2
+            - name: Copy Image to EC2
+              uses: appleboy/scp-action@v0.1.7
+              with:
+                  host: ${{ secrets.EC2_HOST }}
+                  username: ${{ secrets.EC2_USER }}
+                  key: ${{ secrets.EC2_SSH_KEY }}
+                  source: docker-image.tar
+                  target: /home/ubuntu/
+
+            - name: Deploy on EC2
               uses: appleboy/ssh-action@v1
               with:
-                  host: ${{ secrets.EC2_JIOST }}
-                  username: ${{ secrets.EC2_USER || 'ubuntu' }}
-                  key: ${{ secrets.EC2_SSIL_KEY }}
-                  timeout: 60s
-                  command_timeout: 120s
-                  scp: |
-                      ./docker-ts-backend.tar:/home/ubuntu/
+                  host: ${{ secrets.EC2_HOST }}
+                  username: ${{ secrets.EC2_USER }}
+                  key: ${{ secrets.EC2_SSH_KEY }}
+                  timeout: 120s
                   script: |
-                      # Install Docker if not present
-                      if ! command -v docker &> /dev/null; then
-                          echo "Docker not found, installing..."
-                          sudo apt-get update
-                          sudo apt-get install -y docker.io
-                          sudo systemctl start docker
-                          sudo systemctl enable docker
-                          # Add current user to docker group (optional, but we'll use sudo for now)
-                          # sudo usermod -aG docker $USER
+                      set -e
+
+                      if ! command -v docker >/dev/null; then
+                        sudo apt-get update
+                        sudo apt-get install -y docker.io
+                        sudo systemctl enable docker
+                        sudo systemctl start docker
                       fi
 
-                      # Load the Docker image
-                      echo "📦 Loading Docker image..."
-                      sudo docker load -i /home/ubuntu/docker-ts-backend.tar
+                      sudo docker load -i /home/ubuntu/docker-image.tar
 
-                      # Stop and remove existing container
-                      echo "🛑 Stopping existing container..."
-                      sudo docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
-                      sudo docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+                      sudo docker stop $CONTAINER_NAME || true
+                      sudo docker rm $CONTAINER_NAME || true
+                      sudo docker volume create $DOCKER_VOLUME || true
 
-                      # Create volume if it doesn't exist
-                      sudo docker volume create ${{ env.DOCKER_VOLUME }} 2>/dev/null || true
-
-                      # Run new container
-                      echo "🚀 Starting new container..."
                       sudo docker run -d \
-                      -p 5000:5000 \
-                      --name ${{ env.CONTAINER_NAME }} \
-                      -v ${{ env.DOCKER_VOLUME }}:/app/logs \
-                      --restart always \
-                      ${{ env.DOCKER_IMAGE_NAME }}:latest
+                        --name $CONTAINER_NAME \
+                        --restart always \
+                        -p 5000:5000 \
+                        -v $DOCKER_VOLUME:/app/logs \
+                        $DOCKER_IMAGE_NAME:latest
 
-                      # Wait for container to start
-                      sleep 5
-
-                      # Verify deployment
-                      echo "🔍 Verifying deployment..."
-                      if sudo docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}" | grep -q "${{ env.CONTAINER_NAME }}"; then
-                      echo "✅ Deployment successful!"
-                      echo "Container status:"
-                      sudo docker ps --filter "name=${{ env.CONTAINER_NAME }}"
-                      else
-                      echo "❌ Deployment failed!"
-                      echo "Container logs:"
-                      sudo docker logs ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "No logs available"
-                      exit 1
-                      fi
+                      sudo docker ps | grep $CONTAINER_NAME

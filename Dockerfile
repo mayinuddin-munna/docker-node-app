@@ -1,15 +1,25 @@
-FROM node:20
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package.json .
-
-RUN npm install
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
 
 COPY . .
+RUN yarn build
 
-# VOLUME ["/app/logs"]
 
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=build /app/package.json ./
+COPY --from=build /app/yarn.lock ./
+RUN yarn install --frozen-lockfile --production
+
+COPY --from=build /app/dist ./dist
+
+ENV NODE_ENV=production
 EXPOSE 5000
 
-CMD ["npm", "run", "dev"]
+CMD ["node", "dist/server.js"]

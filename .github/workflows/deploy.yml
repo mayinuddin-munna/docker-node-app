@@ -1,44 +1,51 @@
 name: Test EC2 Connection
 
-on: [push]
+on:
+    push:
+        branches: [main]
 
 jobs:
-    test:
+    test-and-deploy:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
               uses: actions/checkout@v4
 
-            - name: Display EC2_HOST (for debugging, mask the value)
+            - name: Trim EC2_HOST secret
+              id: trim-host
               run: |
-                  echo "EC2_HOST is set: ${{ secrets.EC2_HOST != '' }}"
-                  # To see the actual value (be careful, it will be logged)
-                  # echo "EC2_HOST=${{ secrets.EC2_HOST }}"
-
-            - name: Test network connectivity to EC2_HOST
-              run: |
-                  # Use ping to check if the host is reachable (ICMP may be blocked, so we also try port 22)
-                  echo "Testing connectivity to ${{ secrets.EC2_HOST }}"
-                  if ping -c 2 ${{ secrets.EC2_HOST }} &> /dev/null; then
-                    echo "Ping successful"
-                  else
-                    echo "Ping failed (may be blocked)"
+                  # Trim the host secret
+                  HOST='${{ secrets.EC2_HOST }}'
+                  TRIMMED_HOST=$(echo "$HOST" | xargs)
+                  if [ -z "$TRIMMED_HOST" ]; then
+                    echo "ERROR: EC2_HOST secret is empty or not set."
+                    exit 1
                   fi
-                  # Test port 22
-                  if nc -z -w 2 ${{ secrets.EC2_HOST }} 22; then
-                    echo "Port 22 is open"
+                  # Mask the output to avoid leaking the secret
+                  echo "::add-mask::$TRIMMED_HOST"
+                  echo "EC2_HOST secret is set and trimmed."
+                  echo "::set-output name=host::$TRIMMED_HOST"
+
+            - name: Test connectivity to EC2 host
+              run: |
+                  HOST="${{ steps.trim-host.outputs.host }}"
+                  echo "Testing connectivity to $HOST"
+                  # Use nc to test port 22 with a 5 second timeout
+                  if nc -z -w 5 "$HOST" 22; then
+                    echo "✅ Port 22 is open on $HOST"
                   else
-                    echo "Port 22 is not reachable"
+                    echo "❌ Port 22 is not reachable on $HOST"
+                    exit 1
                   fi
 
             - name: Attempt SSH connection
               uses: appleboy/ssh-action@v1
               with:
-                  host: ${{ secrets.EC2_HOST }}
+                  host: ${{ steps.trim-host.outputs.host }}
                   username: ubuntu
                   key: ${{ secrets.EC2_SSH_KEY }}
-                  timeout: 30s
-                  command_timeout: 30s
+                  timeout: 30
+                  command_timeout: 30
                   script: |
-                      echo "Connected!"
-                      hostname
+                      echo "✅ Connected to $(hostname)"
+                      echo "Running from directory: $(pwd)"

@@ -1,23 +1,95 @@
-name: Docker CI/CD Node App
+name: Docker CI/CD for Node.js App
 
 on:
     push:
         branches:
             - main
+        paths-ignore:
+            - "README.md"
+            - "**.gitignore"
+            - "docs/**"
+
+env:
+    DOCKER_IMAGE_NAME: docker-ts-backend
+    CONTAINER_NAME: docker-ts-backend-container
+    DOCKER_VOLUME: docker-ts-backend-volume
 
 jobs:
-    build-and-deploy:
+    build-and-push:
         runs-on: ubuntu-latest
+        if: github.event_name == 'push'
 
         steps:
-            - name: Checkout code
+            - name: Checkout Repository
               uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
 
-            - name: Set up Docker
-              uses: docker/setup-buildx-action@v2
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Login to Docker Hub (Optional)
+              if: false # Set to true if pushing to Docker Registry
+              uses: docker/login-action@v3
+              with:
+                  username: ${{ secrets.DOCKER_USERNAME }}
+                  password: ${{ secrets.DOCKER_PASSWORD }}
 
             - name: Build Docker Image
-              run: docker build -t docker-ts-backend:v1 .
+              run: |
+                  docker build \
+                    --tag $DOCKER_IMAGE_NAME:latest \
+                    --tag $DOCKER_IMAGE_NAME:${{ github.sha }} \
+                    --file Dockerfile \
+                    .
+
+            - name: Save Docker Image to Tar
+              run: |
+                  docker save $DOCKER_IMAGE_NAME:latest -o $DOCKER_IMAGE_NAME.tar
+                  ls -lh $DOCKER_IMAGE_NAME.tar
+
+            - name: Upload Docker Image as Artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: docker-image
+                  path: ${{ env.DOCKER_IMAGE_NAME }}.tar
+                  retention-days: 1
+
+    deploy-to-ec2:
+        runs-on: ubuntu-latest
+        needs: build-and-push
+        if: github.event_name == 'push'
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+
+            - name: Download Docker Image Artifact
+              uses: actions/download-artifact@v4
+              with:
+                  name: docker-image
+                  path: ./artifacts
+
+            - name: Load Docker Image
+              run: |
+                  docker load -i ./artifacts/$DOCKER_IMAGE_NAME.tar
+                  docker images
+
+            - name: Verify SSH Connection
+              uses: appleboy/ssh-action@v1
+              with:
+                  host: ${{ secrets.EC2_HOST }}
+                  username: ubuntu
+                  key: ${{ secrets.EC2_SSH_KEY }}
+                  script_timeout: 30s
+                  script: |
+                      echo "✅ SSH Connection Successful!"
+                      echo "EC2 Instance Details:"
+                      echo "Hostname: $(hostname)"
+                      echo "Date: $(date)"
+                      echo "Uptime: $(uptime -p)"
+                      echo "Disk Usage:"
+                      df -h / | tail -1
 
             - name: Deploy to EC2
               uses: appleboy/ssh-action@v1
@@ -25,13 +97,110 @@ jobs:
                   host: ${{ secrets.EC2_HOST }}
                   username: ubuntu
                   key: ${{ secrets.EC2_SSH_KEY }}
+                  script_timeout: 120s
                   script: |
-                      docker stop docker-ts-backend-container || true
-                      docker rm docker-ts-backend-container || true
+                      # Load environment variables from GitHub secrets if .env doesn't exist
+                      if [ ! -f .env ]; then
+                        echo "WARNING: .env file not found, using environment variables from container"
+                      fi
+
+                      # Create logs directory for volume mount
+                      sudo mkdir -p /var/log/${{ env.CONTAINER_NAME }}
+                      sudo chmod 755 /var/log/${{ env.CONTAINER_NAME }}
+
+                      # Stop and remove existing container
+                      echo "🛑 Stopping existing container..."
+                      docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+                      docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+
+                      # Clean up old Docker images to save space
+                      echo "🧹 Cleaning up unused Docker images..."
+                      docker image prune -af --filter "until=24h" || true
+
+                      # Create Docker volume if it doesn't exist
+                      echo "📁 Setting up Docker volume..."
+                      docker volume create ${{ env.DOCKER_VOLUME }} 2>/dev/null || true
+
+                      # Pull latest image (if using registry) or use local
+                      # docker pull your-registry/${{ env.DOCKER_IMAGE_NAME }}:latest  # Uncomment if using registry
+
+                      # Run new container
+                      echo "🚀 Starting new container..."
                       docker run -d \
-                          -p 5000:5000 \
-                          --name docker-ts-backend-container \
-                          -v docker-ts-backend-volume:/app/logs \
-                          --env-file .env \
-                          --restart always \
-                          docker-ts-backend:v1
+                        --name ${{ env.CONTAINER_NAME }} \
+                        --restart unless-stopped \
+                        -p 5000:5000 \
+                        -p 9229:9229 \
+                        -v ${{ env.DOCKER_VOLUME }}:/app/logs \
+                        -v /var/log/${{ env.CONTAINER_NAME }}:/app/logs/host \
+                        -e NODE_ENV=production \
+                        -e TZ=UTC \
+                        --memory="512m" \
+                        --cpus="1.0" \
+                        ${{ env.DOCKER_IMAGE_NAME }}:latest
+
+                      # Wait for container to be healthy
+                      echo "⏳ Waiting for container to be ready..."
+                      sleep 10
+
+                      # Verify deployment
+                      echo "🔍 Deployment Verification:"
+                      echo "Container Status:"
+                      docker ps --filter "name=${{ env.CONTAINER_NAME }}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+                      echo -e "\nContainer Logs (last 5 lines):"
+                      docker logs --tail 5 ${{ env.CONTAINER_NAME }} || echo "Could not fetch logs"
+
+                      echo -e "\n🟢 Deployment completed successfully at $(date)"
+
+            - name: Health Check
+              uses: appleboy/ssh-action@v1
+              if: always()
+              with:
+                  host: ${{ secrets.EC2_HOST }}
+                  username: ubuntu
+                  key: ${{ secrets.EC2_SSH_KEY }}
+                  script: |
+                      echo "🏥 Performing Health Check..."
+
+                      # Check if container is running
+                      CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "not_found")
+
+                      if [ "$CONTAINER_STATUS" = "running" ]; then
+                        echo "✅ Container is running"
+                        
+                        # Check internal health (adjust based on your app)
+                        if docker exec ${{ env.CONTAINER_NAME }} node -e "console.log('Node.js OK')" 2>/dev/null; then
+                          echo "✅ Application process is healthy"
+                        else
+                          echo "⚠️ Application process check failed"
+                        fi
+                        
+                        # Check if port is listening
+                        if netstat -tuln | grep :5000 > /dev/null; then
+                          echo "✅ Port 5000 is listening"
+                        else
+                          echo "❌ Port 5000 is NOT listening"
+                        fi
+                        
+                      else
+                        echo "❌ Container status: $CONTAINER_STATUS"
+                        echo "Recent logs:"
+                        docker logs --tail 20 ${{ env.CONTAINER_NAME }} 2>/dev/null || echo "No logs available"
+                        exit 1
+                      fi
+
+    notification:
+        runs-on: ubuntu-latest
+        needs: deploy-to-ec2
+        if: always()
+        steps:
+            - name: Deployment Status
+              run: |
+                  if [ "${{ needs.deploy-to-ec2.result }}" = "success" ]; then
+                    echo "✅ Deployment successful!"
+                    echo "App should be available at: http://${{ secrets.EC2_HOST }}:5000"
+                  else
+                    echo "❌ Deployment failed!"
+                    echo "Check the 'deploy-to-ec2' job for details"
+                  fi

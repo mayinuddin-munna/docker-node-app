@@ -5,11 +5,10 @@ on:
     branches:
       - main
 
-env:
-  DOCKER_IMAGE_NAME: docker-ts-backend
-  IMAGE_TAG: v1
-  CONTAINER_NAME: docker-ts-backend-container
-  DOCKER_VOLUME: docker-ts-backend-volume
+env: CONTAINER_NAME=${{ env.CONTAINER_NAME }}
+  DOCKER_VOLUME=${{ env.DOCKER_VOLUME }}
+  DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
+  IMAGE_TAG=${{ env.IMAGE_TAG }}
 
 jobs:
   verify-connection:
@@ -85,12 +84,18 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 120s
           envs: |
-            CONTAINER_NAME=docker-ts-backend-container
-            DOCKER_VOLUME=docker-ts-backend-volume
-            DOCKER_IMAGE_NAME=docker-ts-backend
-            IMAGE_TAG=v1
+            CONTAINER_NAME=${{ env.CONTAINER_NAME }}
+            DOCKER_VOLUME=${{ env.DOCKER_VOLUME }}
+            DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
+            IMAGE_TAG=${{ env.IMAGE_TAG }}
           script: |
             set -e
+
+            # Debug: print environment variables
+            echo "CONTAINER_NAME: $CONTAINER_NAME"
+            echo "DOCKER_VOLUME: $DOCKER_VOLUME"
+            echo "DOCKER_IMAGE_NAME: $DOCKER_IMAGE_NAME"
+            echo "IMAGE_TAG: $IMAGE_TAG"
 
             # Load Docker image
             sudo docker load -i /home/ubuntu/docker-image.tar

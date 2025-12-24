@@ -14,6 +14,16 @@
             "date": 1766551417572,
             "name": "/home/munna/Projects/docker-node-app/logs/winston/errors/docker-2025-12-24-10-error.log",
             "hash": "7a44ce1ee944fda0cb5d58cdd4c55be6cb490291d3dea0ad22ef08a394188447"
+        },
+        {
+            "date": 1766559167665,
+            "name": "/home/munna/Projects/docker-node-app/logs/winston/errors/docker-2025-12-24-12-error.log",
+            "hash": "068483c61d86319c5e2e6e106a9d826f006dd9d2143a1f2cdb4aaec36b5bbb32"
+        },
+        {
+            "date": 1766565445615,
+            "name": "/home/munna/Projects/docker-node-app/logs/winston/errors/docker-2025-12-24-14-error.log",
+            "hash": "2779f247a8fdf8b6c6bd6d3437de1e3799f18a5e2de0cadaaccbbc49e7137620"
         }
     ],
     "hashType": "sha256"

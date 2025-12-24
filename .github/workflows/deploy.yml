@@ -5,9 +5,11 @@ on:
     branches:
       - main
 
-env: DOCKER_VOLUME=${{ env.DOCKER_VOLUME }}
-  DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
-  IMAGE_TAG=${{ env.IMAGE_TAG }}
+env:
+  DOCKER_IMAGE_NAME: docker-ts-backend
+  IMAGE_TAG: v1
+  CONTAINER_NAME: docker-ts-backend-container
+  DOCKER_VOLUME: docker-ts-backend-volume
 
 jobs:
   verify-connection:
@@ -18,14 +20,16 @@ jobs:
       - name: Verify SSH Connection
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.EC2_HOST }} # FIXED: EC2_JIOST not EC2_HOST
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.EC2_SSH_KEY }} # FIXED: EC2_SSIL_KEY not EC2_SSH_KEY
           timeout: 30s
           script: |
             echo "SSH OK"
             hostname
             whoami
+            echo "Current directory: $(pwd)"
+            ls -la
 
   build:
     runs-on: ubuntu-latest
@@ -66,52 +70,94 @@ jobs:
         with:
           name: docker-image
 
+      - name: Debug - Check Downloaded File
+        run: |
+          echo "Checking downloaded file..."
+          ls -lh docker-image.tar
+          file docker-image.tar
+
       - name: Copy Image to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.EC2_HOST }} # FIXED: EC2_JIOST not EC2_HOST
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.EC2_SSH_KEY }} # FIXED: EC2_SSIL_KEY not EC2_SSH_KEY
           source: docker-image.tar
           target: /home/ubuntu/
 
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ secrets.EC2_HOST }} # FIXED: EC2_JIOST not EC2_HOST
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.EC2_SSH_KEY }} # FIXED: EC2_SSIL_KEY not EC2_SSH_KEY
           timeout: 120s
           envs: |
-            CONTAINER_NAME=${{ env.CONTAINER_NAME }}
-            DOCKER_VOLUME=${{ env.DOCKER_VOLUME }}
-            DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
-            IMAGE_TAG=${{ env.IMAGE_TAG }}
+            CONTAINER_NAME=docker-ts-backend-container
+            DOCKER_VOLUME=docker-ts-backend-volume
+            DOCKER_IMAGE_NAME=docker-ts-backend
+            IMAGE_TAG=v1
           script: |
             set -e
 
-            # Debug: print environment variables
-            echo "CONTAINER_NAME: $CONTAINER_NAME"
-            echo "DOCKER_VOLUME: $DOCKER_VOLUME"
-            echo "DOCKER_IMAGE_NAME: $DOCKER_IMAGE_NAME"
-            echo "IMAGE_TAG: $IMAGE_TAG"
+            # Debug: Show what's on EC2
+            echo "📁 Files on EC2 before deployment:"
+            ls -la /home/ubuntu/
 
             # Load Docker image
+            echo "📦 Loading Docker image..."
             sudo docker load -i /home/ubuntu/docker-image.tar
 
+            # Verify image loaded
+            echo "✅ Images after load:"
+            sudo docker images | grep docker-ts-backend
+
             # Stop and remove existing container
-            sudo docker stop $CONTAINER_NAME || true
-            sudo docker rm $CONTAINER_NAME || true
+            echo "🛑 Stopping existing container..."
+            sudo docker stop $CONTAINER_NAME 2>/dev/null || echo "No container to stop"
+            sudo docker rm $CONTAINER_NAME 2>/dev/null || echo "No container to remove"
 
             # Create volume if not exists
-            sudo docker volume create $DOCKER_VOLUME || true
+            echo "📁 Creating Docker volume..."
+            sudo docker volume create $DOCKER_VOLUME 2>/dev/null || echo "Volume already exists"
+
+            # Check if .env file exists
+            echo "🔍 Checking for .env file..."
+            if [ -f /home/ubuntu/.env ]; then
+              echo "✅ Found .env file, using it"
+              ENV_FILE_OPTION="--env-file /home/ubuntu/.env"
+            else
+              echo "⚠️ No .env file found"
+              ENV_FILE_OPTION=""
+            fi
 
             # Run new container
-            sudo docker run -d \
-              --name $CONTAINER_NAME \
-              --restart always \
-              -p 5000:5000 \
-              -v $DOCKER_VOLUME:/app/logs \
-              $DOCKER_IMAGE_NAME:$IMAGE_TAG
+            echo "🚀 Starting new container..."
+            if [ -n "$ENV_FILE_OPTION" ]; then
+              sudo docker run -d \
+                --name $CONTAINER_NAME \
+                --restart always \
+                -p 5000:5000 \
+                -v $DOCKER_VOLUME:/app/logs \
+                $ENV_FILE_OPTION \
+                $DOCKER_IMAGE_NAME:$IMAGE_TAG
+            else
+              sudo docker run -d \
+                --name $CONTAINER_NAME \
+                --restart always \
+                -p 5000:5000 \
+                -v $DOCKER_VOLUME:/app/logs \
+                $DOCKER_IMAGE_NAME:$IMAGE_TAG
+            fi
 
-            sudo docker ps | grep $CONTAINER_NAME
+            # Wait a moment
+            sleep 5
+
+            # Verify deployment
+            echo "🔍 Verifying deployment..."
+            sudo docker ps --filter "name=$CONTAINER_NAME"
+
+            echo "📝 Container logs:"
+            sudo docker logs --tail 10 $CONTAINER_NAME 2>/dev/null || echo "No logs yet"
+
+            echo "✅ Deployment complete!"

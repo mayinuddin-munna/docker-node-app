@@ -14,6 +14,16 @@
             "date": 1766462861340,
             "name": "/home/munna/Projects/docker-node-app/logs/winston/successes/docker-2025-12-23-10-07-41-success.log",
             "hash": "7ccdbecec1fd1e97f75a37b5910415a143438e2e1be3358f6131473507beb640"
+        },
+        {
+            "date": 1766551417569,
+            "name": "/home/munna/Projects/docker-node-app/logs/winston/successes/docker-2025-12-24-10-43-37-success.log",
+            "hash": "6e4466acf25736faedf60d53161b7ef9298dcd7da864c2e8d8cb4a1df710e6dc"
+        },
+        {
+            "date": 1766551418386,
+            "name": "/home/munna/Projects/docker-node-app/logs/winston/successes/docker-2025-12-24-10-43-38-success.log",
+            "hash": "b056817324d1ef4b43b37d7610ad99dcfec462dbf5d010a10151f579ab0e7e34"
         }
     ],
     "hashType": "sha256"

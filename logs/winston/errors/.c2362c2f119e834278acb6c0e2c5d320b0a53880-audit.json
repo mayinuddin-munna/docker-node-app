@@ -9,6 +9,11 @@
             "date": 1766462860580,
             "name": "/home/munna/Projects/docker-node-app/logs/winston/errors/docker-2025-12-23-10-error.log",
             "hash": "8af4f6e7f39d5b04bbd83731be5d3ce68f56cc98efdd010762449cca93509a2b"
+        },
+        {
+            "date": 1766551417572,
+            "name": "/home/munna/Projects/docker-node-app/logs/winston/errors/docker-2025-12-24-10-error.log",
+            "hash": "7a44ce1ee944fda0cb5d58cdd4c55be6cb490291d3dea0ad22ef08a394188447"
         }
     ],
     "hashType": "sha256"

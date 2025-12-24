@@ -1,110 +1,115 @@
 name: Docker CI/CD for Node.js App
 
 on:
-    push:
-        branches:
-            - main
+  push:
+    branches:
+      - main
 
 env:
-    DOCKER_IMAGE_NAME: docker-ts-backend
-    IMAGE_TAG: v1
-    CONTAINER_NAME: docker-ts-backend-container
-    DOCKER_VOLUME: docker-ts-backend-volume
+  DOCKER_IMAGE_NAME: docker-ts-backend
+  IMAGE_TAG: v1
+  CONTAINER_NAME: docker-ts-backend-container
+  DOCKER_VOLUME: docker-ts-backend-volume
 
 jobs:
-    verify-connection:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
+  verify-connection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Verify SSH Connection
-              uses: appleboy/ssh-action@v1
-              with:
-                  host: ${{ secrets.EC2_HOST }}
-                  username: ${{ secrets.EC2_USER }}
-                  key: ${{ secrets.EC2_SSH_KEY }}
-                  timeout: 30s
-                  script: |
-                      echo "SSH OK"
-                      hostname
-                      whoami
+      - name: Verify SSH Connection
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 30s
+          script: |
+            echo "SSH OK"
+            hostname
+            whoami
 
-    build:
-        runs-on: ubuntu-latest
-        needs: verify-connection
+  build:
+    runs-on: ubuntu-latest
+    needs: verify-connection
 
-        steps:
-            - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Build Docker Image
-              run: |
-                  docker build \
-                    -t $DOCKER_IMAGE_NAME:$IMAGE_TAG \
-                    .
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t $DOCKER_IMAGE_NAME:$IMAGE_TAG \
+            .
 
-            - name: Verify Image Exists
-              run: docker images
+      - name: Verify Image Exists
+        run: docker images
 
-            - name: Save Docker Image
-              run: |
-                  docker save \
-                    $DOCKER_IMAGE_NAME:$IMAGE_TAG \
-                    -o docker-image.tar
+      - name: Save Docker Image
+        run: |
+          docker save \
+            $DOCKER_IMAGE_NAME:$IMAGE_TAG \
+            -o docker-image.tar
 
-            - name: Upload Docker Image
-              uses: actions/upload-artifact@v4
-              with:
-                  name: docker-image
-                  path: docker-image.tar
-                  retention-days: 1
+      - name: Upload Docker Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar
+          retention-days: 1
 
-    deploy:
-        runs-on: ubuntu-latest
-        needs: build
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
 
-        steps:
-            - name: Download Docker Image
-              uses: actions/download-artifact@v4
-              with:
-                  name: docker-image
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
 
-            - name: Copy Image to EC2
-              uses: appleboy/scp-action@v0.1.7
-              with:
-                  host: ${{ secrets.EC2_HOST }}
-                  username: ${{ secrets.EC2_USER }}
-                  key: ${{ secrets.EC2_SSH_KEY }}
-                  source: docker-image.tar
-                  target: /home/ubuntu/
+      - name: Copy Image to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: docker-image.tar
+          target: /home/ubuntu/
 
-            - name: Deploy on EC2
-              uses: appleboy/ssh-action@v1
-              with:
-                  host: ${{ secrets.EC2_HOST }}
-                  username: ${{ secrets.EC2_USER }}
-                  key: ${{ secrets.EC2_SSH_KEY }}
-                  timeout: 120s
-                  script: |
-                      set -e
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 120s
+          envs: |
+            CONTAINER_NAME=${{ env.CONTAINER_NAME }}
+            DOCKER_VOLUME=${{ env.DOCKER_VOLUME }}
+            DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
+            IMAGE_TAG=${{ env.IMAGE_TAG }}
+          script: |
+            set -e
 
-                      if ! command -v docker >/dev/null; then
-                        sudo apt-get update
-                        sudo apt-get install -y docker.io
-                        sudo systemctl enable docker
-                        sudo systemctl start docker
-                      fi
+            if ! command -v docker >/dev/null; then
+              sudo apt-get update
+              sudo apt-get install -y docker.io
+              sudo systemctl enable docker
+              sudo systemctl start docker
+            fi
 
-                      sudo docker load -i /home/ubuntu/docker-image.tar
+            sudo docker load -i /home/ubuntu/docker-image.tar
 
-                      sudo docker stop $CONTAINER_NAME || true
-                      sudo docker rm $CONTAINER_NAME || true
-                      sudo docker volume create $DOCKER_VOLUME || true
+            sudo docker stop $CONTAINER_NAME || true
+            sudo docker rm $CONTAINER_NAME || true
+            sudo docker volume create $DOCKER_VOLUME || true
 
-                      sudo docker run -d \
-                        --name $CONTAINER_NAME \
-                        --restart always \
-                        -p 5000:5000 \
-                        -v $DOCKER_VOLUME:/app/logs \
-                        $DOCKER_IMAGE_NAME:$IMAGE_TAG
+            sudo docker run -d \
+              --name $CONTAINER_NAME \
+              --restart always \
+              -p 5000:5000 \
+              -v $DOCKER_VOLUME:/app/logs \
+              $DOCKER_IMAGE_NAME:$IMAGE_TAG
 
-                      sudo docker ps | grep $CONTAINER_NAME
+            sudo docker ps | grep $CONTAINER_NAME

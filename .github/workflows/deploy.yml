@@ -77,7 +77,7 @@ jobs:
           source: docker-image.tar
           target: /home/ubuntu/
 
-      - name: Deploy on EC2
+      - name: Try Deploy on EC2
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}

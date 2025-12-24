@@ -5,7 +5,7 @@ on:
     branches:
       - main
 
-env: CONTAINER_NAME=${{ env.CONTAINER_NAME }}
+env:
   DOCKER_VOLUME=${{ env.DOCKER_VOLUME }}
   DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
   IMAGE_TAG=${{ env.IMAGE_TAG }}
